@@ -103,7 +103,11 @@ var controlGroupCmd = &cobra.Command{
 	Short: "Control a group",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		groupNum, _ := strconv.Atoi(args[0])
+		groupNum, err := strconv.Atoi(args[0])
+		if err != nil {
+			fmt.Printf("Invalid group number '%s': must be a number\n", args[0])
+			os.Exit(1)
+		}
 
 		powerStr, _ := cmd.Flags().GetString("power")
 		percent, _ := cmd.Flags().GetInt("percent")
@@ -131,7 +135,7 @@ var controlGroupCmd = &cobra.Command{
 		client := getClient()
 		defer client.Close()
 
-		err := client.SetGroupControl([]at2plus.GroupControl{
+		err = client.SetGroupControl([]at2plus.GroupControl{
 			{
 				GroupNumber: uint8(groupNum),
 				Power:       power,
@@ -152,7 +156,11 @@ var controlACCmd = &cobra.Command{
 	Short: "Control an AC",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		acNum, _ := strconv.Atoi(args[0])
+		acNum, err := strconv.Atoi(args[0])
+		if err != nil {
+			fmt.Printf("Invalid AC number '%s': must be a number\n", args[0])
+			os.Exit(1)
+		}
 
 		powerStr, _ := cmd.Flags().GetString("power")
 		modeStr, _ := cmd.Flags().GetString("mode")
@@ -196,7 +204,7 @@ var controlACCmd = &cobra.Command{
 		client := getClient()
 		defer client.Close()
 
-		err := client.SetACControl([]at2plus.ACControl{
+		err = client.SetACControl([]at2plus.ACControl{
 			{
 				ACNumber: uint8(acNum),
 				Power:    power,

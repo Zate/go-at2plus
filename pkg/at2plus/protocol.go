@@ -11,10 +11,10 @@ const (
 	HeaderBytes = 0x5555
 
 	// Address constants
-	AddressSendStandard   = 0x80b0
-	AddressSendExtended   = 0x90b0
-	AddressRecvStandard   = 0xb080
-	AddressRecvExtended   = 0xb090
+	AddressSendStandard = 0x80b0
+	AddressSendExtended = 0x90b0
+	AddressRecvStandard = 0xb080
+	AddressRecvExtended = 0xb090
 
 	// Message Types
 	MsgTypeControlStatus = 0xC0
@@ -27,7 +27,7 @@ const (
 	SubMsgTypeACStatus     = 0x23
 
 	// Extended Message Sub Types
-	ExtMsgTypeACError = 0x10
+	ExtMsgTypeACError   = 0x10
 	ExtMsgTypeACAbility = 0x11
 	ExtMsgTypeGroupName = 0x12
 )
@@ -64,7 +64,7 @@ func NewPacket(address uint16, msgID uint8, msgType uint8, data []byte) *Packet 
 // Encode serializes the packet into bytes
 func (p *Packet) Encode() []byte {
 	buf := make([]byte, 8+len(p.Data)+2) // Header(2)+Addr(2)+ID(1)+Type(1)+Len(2) + Data + CRC(2)
-	
+
 	binary.BigEndian.PutUint16(buf[0:2], p.Header)
 	binary.BigEndian.PutUint16(buf[2:4], p.Address)
 	buf[4] = p.MsgID
@@ -76,7 +76,7 @@ func (p *Packet) Encode() []byte {
 	// Spec says: "Use all data except the header."
 	crcData := buf[2 : 8+len(p.Data)]
 	p.CRC = Checksum(crcData)
-	
+
 	binary.BigEndian.PutUint16(buf[8+len(p.Data):], p.CRC)
 
 	return buf
@@ -106,7 +106,7 @@ func Decode(data []byte) (*Packet, error) {
 	copy(packetData, data[8:8+dataLen])
 
 	crcReceived := binary.BigEndian.Uint16(data[8+dataLen:])
-	
+
 	// Validate CRC
 	crcData := data[2 : 8+dataLen]
 	crcCalculated := Checksum(crcData)
