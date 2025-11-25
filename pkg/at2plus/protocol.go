@@ -30,12 +30,19 @@ const (
 	ExtMsgTypeACError   = 0x10
 	ExtMsgTypeACAbility = 0x11
 	ExtMsgTypeGroupName = 0x12
+
+	// MaxDataLen is the maximum allowed data length for a packet.
+	// The protocol uses uint16 for length (max 65535), but real messages
+	// are small (largest documented is ~54 bytes for AC Ability).
+	// This limit provides protection against malformed packets.
+	MaxDataLen = 1024
 )
 
 var (
 	ErrInvalidHeader   = errors.New("invalid header")
 	ErrInvalidChecksum = errors.New("invalid checksum")
 	ErrInvalidLength   = errors.New("invalid data length")
+	ErrDataLenExceeded = errors.New("data length exceeds maximum")
 )
 
 // Packet represents a full AirTouch 2+ protocol packet

@@ -93,6 +93,12 @@ func (c *Client) readLoop() {
 
 			dataLen := int(headerBuf[6])<<8 | int(headerBuf[7])
 
+			// Validate data length to prevent excessive memory allocation
+			if dataLen > MaxDataLen {
+				// Skip this packet - likely malformed or malicious
+				continue
+			}
+
 			// Read Data + CRC (2 bytes)
 			toRead := dataLen + 2
 			dataBuf := make([]byte, toRead)
