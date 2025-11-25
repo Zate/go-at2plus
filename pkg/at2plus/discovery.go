@@ -59,6 +59,7 @@ func Discover() ([]DiscoveryResult, error) {
 	}
 
 	timeout := time.After(3 * time.Second)
+collectResults:
 	for i := 0; i < count; i++ {
 		select {
 		case res := <-resultsCh:
@@ -67,7 +68,7 @@ func Discover() ([]DiscoveryResult, error) {
 			}
 		case <-timeout:
 			// Stop waiting
-			break
+			break collectResults
 		}
 	}
 
