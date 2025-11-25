@@ -108,6 +108,10 @@ var controlGroupCmd = &cobra.Command{
 			fmt.Printf("Invalid group number '%s': must be a number\n", args[0])
 			os.Exit(1)
 		}
+		if groupNum < 0 || groupNum > 15 {
+			fmt.Printf("Invalid group number %d: must be 0-15\n", groupNum)
+			os.Exit(1)
+		}
 
 		powerStr, _ := cmd.Flags().GetString("power")
 		percent, _ := cmd.Flags().GetInt("percent")
@@ -159,6 +163,10 @@ var controlACCmd = &cobra.Command{
 		acNum, err := strconv.Atoi(args[0])
 		if err != nil {
 			fmt.Printf("Invalid AC number '%s': must be a number\n", args[0])
+			os.Exit(1)
+		}
+		if acNum < 0 || acNum > 7 {
+			fmt.Printf("Invalid AC number %d: must be 0-7\n", acNum)
 			os.Exit(1)
 		}
 
