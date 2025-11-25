@@ -3,36 +3,51 @@ package at2plus
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
 )
 
-// Client represents a connection to an AirTouch 2+ device
+// Client represents a connection to an AirTouch 2+ device.
 type Client struct {
-	conn      net.Conn
-	addr      string
-	mu        sync.Mutex
-	pending   map[uint8]chan *Packet
-	pendingMu sync.Mutex
-	nextMsgID uint8
-	closeCh   chan struct{}
-	isClosed  bool
+	conn           net.Conn
+	addr           string
+	port           int
+	requestTimeout time.Duration
+	logger         *slog.Logger
+	mu             sync.Mutex
+	pending        map[uint8]chan *Packet
+	pendingMu      sync.Mutex
+	nextMsgID      uint8
+	closeCh        chan struct{}
+	isClosed       bool
 }
 
-// NewClient creates a new client and connects to the device
-func NewClient(ip string) (*Client, error) {
-	addr := fmt.Sprintf("%s:9200", ip)
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+// NewClient creates a new client and connects to the device.
+// Options can be provided to configure the client behavior.
+func NewClient(ip string, opts ...ClientOption) (*Client, error) {
+	cfg := defaultConfig()
+	for _, opt := range opts {
+		if err := opt(cfg); err != nil {
+			return nil, fmt.Errorf("invalid option: %w", err)
+		}
+	}
+
+	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", cfg.port))
+	conn, err := net.DialTimeout("tcp", addr, cfg.connectTimeout)
 	if err != nil {
 		return nil, err
 	}
 
 	c := &Client{
-		conn:    conn,
-		addr:    addr,
-		pending: make(map[uint8]chan *Packet),
-		closeCh: make(chan struct{}),
+		conn:           conn,
+		addr:           addr,
+		port:           cfg.port,
+		requestTimeout: cfg.requestTimeout,
+		logger:         cfg.logger,
+		pending:        make(map[uint8]chan *Packet),
+		closeCh:        make(chan struct{}),
 	}
 
 	go c.readLoop()
@@ -162,7 +177,7 @@ func (c *Client) sendRequest(msgType uint8, data []byte) (*Packet, error) {
 	select {
 	case resp := <-respCh:
 		return resp, nil
-	case <-time.After(2 * time.Second):
+	case <-time.After(c.requestTimeout):
 		c.pendingMu.Lock()
 		delete(c.pending, msgID)
 		c.pendingMu.Unlock()
