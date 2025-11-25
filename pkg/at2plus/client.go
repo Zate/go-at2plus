@@ -2,6 +2,7 @@ package at2plus
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -69,7 +70,7 @@ func (c *Client) readLoop() {
 
 			// Proper reader implementation:
 			headerBuf := make([]byte, 8) // Header(2)+Addr(2)+ID(1)+Type(1)+Len(2)
-			_, err := c.conn.Read(headerBuf)
+			_, err := io.ReadFull(c.conn, headerBuf)
 			if err != nil {
 				// Handle error (reconnect or close)
 				c.Close()
@@ -93,17 +94,12 @@ func (c *Client) readLoop() {
 			dataLen := int(headerBuf[6])<<8 | int(headerBuf[7])
 
 			// Read Data + CRC (2 bytes)
-			totalRead := 0
 			toRead := dataLen + 2
 			dataBuf := make([]byte, toRead)
-
-			for totalRead < toRead {
-				n, err := c.conn.Read(dataBuf[totalRead:])
-				if err != nil {
-					c.Close()
-					return
-				}
-				totalRead += n
+			_, err = io.ReadFull(c.conn, dataBuf)
+			if err != nil {
+				c.Close()
+				return
 			}
 
 			// Combine
