@@ -112,7 +112,7 @@ func (c *Client) readLoop() {
 			fullPacket := append(headerBuf, dataBuf...)
 			packet, err := Decode(fullPacket)
 			if err != nil {
-				fmt.Printf("Error decoding packet: %v\n", err)
+				// Invalid packet, skip and continue reading
 				continue
 			}
 
