@@ -1,18 +1,24 @@
 BINARY_NAME=at2plus
 GO_FILES=$(shell find . -name '*.go')
 
-.PHONY: all build test lint clean
+.PHONY: all fmt vet lint test build clean
 
-all: build test lint
+all: fmt vet lint test build
 
-build:
-	go build -o bin/$(BINARY_NAME) ./cmd/at2plus
+fmt:
+	go fmt ./...
+
+vet:
+	go vet ./...
+
+lint:
+	golangci-lint run ./...
 
 test:
 	go test -v ./...
 
-lint:
-	golangci-lint run
+build:
+	go build -o bin/$(BINARY_NAME) ./cmd/at2plus
 
 clean:
 	rm -rf bin
