@@ -1,0 +1,10 @@
+# Binaries
+bin/
+
+# Temporary files
+spec.txt
+*.out
+*.test
+
+# OS specific
+.DS_Store
