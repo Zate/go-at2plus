@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -37,8 +38,15 @@ func Discover(ctx context.Context) ([]DiscoveryResult, error) {
 		ok bool
 	}
 
-	resultsCh := make(chan scanResult)
+	// Count total IPs to scan
 	count := 0
+	for range ips {
+		count += 254 // 1-254 for each /24 subnet
+	}
+
+	// Use buffered channel to prevent goroutine leaks
+	resultsCh := make(chan scanResult, count)
+	var wg sync.WaitGroup
 
 	for _, ip := range ips {
 		// Assume /24 subnet
@@ -48,8 +56,9 @@ func Discover(ctx context.Context) ([]DiscoveryResult, error) {
 
 		for i := 1; i < 255; i++ {
 			targetIP := net.IP{baseIP[0], baseIP[1], baseIP[2], byte(i)}
-			count++
+			wg.Add(1)
 			go func(ip string) {
+				defer wg.Done()
 				var d net.Dialer
 				dialCtx, dialCancel := context.WithTimeout(ctx, 200*time.Millisecond)
 				defer dialCancel()
@@ -64,16 +73,22 @@ func Discover(ctx context.Context) ([]DiscoveryResult, error) {
 		}
 	}
 
-collectResults:
-	for i := 0; i < count; i++ {
+	// Close channel when all goroutines complete
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	// Collect results until channel is closed or context is done
+	for res := range resultsCh {
+		if res.ok {
+			results = append(results, DiscoveryResult{IP: res.ip})
+		}
+		// Check context between results
 		select {
-		case res := <-resultsCh:
-			if res.ok {
-				results = append(results, DiscoveryResult{IP: res.ip})
-			}
 		case <-ctx.Done():
-			// Context canceled or timed out
-			break collectResults
+			return results, nil
+		default:
 		}
 	}
 
