@@ -1,6 +1,7 @@
 package at2plus
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -25,8 +26,9 @@ type Client struct {
 }
 
 // NewClient creates a new client and connects to the device.
+// The context is used for the connection timeout.
 // Options can be provided to configure the client behavior.
-func NewClient(ip string, opts ...ClientOption) (*Client, error) {
+func NewClient(ctx context.Context, ip string, opts ...ClientOption) (*Client, error) {
 	cfg := defaultConfig()
 	for _, opt := range opts {
 		if err := opt(cfg); err != nil {
@@ -34,8 +36,16 @@ func NewClient(ip string, opts ...ClientOption) (*Client, error) {
 		}
 	}
 
+	// Apply connect timeout to context if not already set
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, cfg.connectTimeout)
+		defer cancel()
+	}
+
 	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", cfg.port))
-	conn, err := net.DialTimeout("tcp", addr, cfg.connectTimeout)
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +153,7 @@ func (c *Client) readLoop() {
 	}
 }
 
-func (c *Client) sendRequest(msgType uint8, data []byte) (*Packet, error) {
+func (c *Client) sendRequest(ctx context.Context, msgType uint8, data []byte) (*Packet, error) {
 	c.mu.Lock()
 	msgID := c.nextMsgID
 	c.nextMsgID++
@@ -173,35 +183,30 @@ func (c *Client) sendRequest(msgType uint8, data []byte) (*Packet, error) {
 		return nil, err
 	}
 
+	// Apply request timeout if context has no deadline
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.requestTimeout)
+		defer cancel()
+	}
+
 	// Wait for response
 	select {
 	case resp := <-respCh:
 		return resp, nil
-	case <-time.After(c.requestTimeout):
+	case <-ctx.Done():
 		c.pendingMu.Lock()
 		delete(c.pending, msgID)
 		c.pendingMu.Unlock()
-		return nil, fmt.Errorf("timeout waiting for response to msgID %d", msgID)
+		return nil, fmt.Errorf("request canceled: %w", ctx.Err())
 	}
 }
 
-// GetGroupStatus requests status for all groups
-func (c *Client) GetGroupStatus() ([]GroupStatus, error) {
-	// Spec: Send 0x21 with empty data (but formatted as Group Status request)
-	// "Sending this message to AirTouch without any sub data (data length: 0x00 0x08, repeat count: 0x00, repeat length: 0x00)"
-	// Wait, spec says:
-	// "Data received from AirTouch: ... Repeat data count is the group count..."
-	// "Request status of groups: ... Sub type 0x21 0x00... Length 0x08"
-	// So we send a packet with SubType 0x21 and 0s.
-
-	// Construct payload manually or use Marshal?
-	// MarshalGroupControl is for 0x20.
-	// We need a generic way or specific function.
-
-	// Payload: 0x21 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+// GetGroupStatus requests status for all groups.
+func (c *Client) GetGroupStatus(ctx context.Context) ([]GroupStatus, error) {
 	payload := []byte{SubMsgTypeGroupStatus, 0, 0, 0, 0, 0, 0, 0}
 
-	resp, err := c.sendRequest(MsgTypeControlStatus, payload)
+	resp, err := c.sendRequest(ctx, MsgTypeControlStatus, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -209,12 +214,11 @@ func (c *Client) GetGroupStatus() ([]GroupStatus, error) {
 	return UnmarshalGroupStatus(resp.Data)
 }
 
-// GetACStatus requests status for all ACs
-func (c *Client) GetACStatus() ([]ACStatus, error) {
-	// Payload: 0x23 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+// GetACStatus requests status for all ACs.
+func (c *Client) GetACStatus(ctx context.Context) ([]ACStatus, error) {
 	payload := []byte{SubMsgTypeACStatus, 0, 0, 0, 0, 0, 0, 0}
 
-	resp, err := c.sendRequest(MsgTypeControlStatus, payload)
+	resp, err := c.sendRequest(ctx, MsgTypeControlStatus, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -222,43 +226,33 @@ func (c *Client) GetACStatus() ([]ACStatus, error) {
 	return UnmarshalACStatus(resp.Data)
 }
 
-// SetGroupControl sends a control command to groups
-func (c *Client) SetGroupControl(groups []GroupControl) error {
+// SetGroupControl sends a control command to groups.
+func (c *Client) SetGroupControl(ctx context.Context, groups []GroupControl) error {
 	data, err := MarshalGroupControl(groups)
 	if err != nil {
 		return err
 	}
 
-	// Spec says: "AirTouch will respond a message with sub type 0x21."
-	// So we expect a Group Status response.
-	_, err = c.sendRequest(MsgTypeControlStatus, data)
+	_, err = c.sendRequest(ctx, MsgTypeControlStatus, data)
 	return err
 }
 
-// SetACControl sends a control command to ACs
-func (c *Client) SetACControl(acs []ACControl) error {
+// SetACControl sends a control command to ACs.
+func (c *Client) SetACControl(ctx context.Context, acs []ACControl) error {
 	data, err := MarshalACControl(acs)
 	if err != nil {
 		return err
 	}
 
-	_, err = c.sendRequest(MsgTypeControlStatus, data)
+	_, err = c.sendRequest(ctx, MsgTypeControlStatus, data)
 	return err
 }
 
-// GetACAbility requests ability for a specific AC (or all if acNum is special? Spec says 0-3)
-// Spec: "Sending an extended message with data 0xFF 0x11 or (0xFF 0x11 [0-3])"
-// To request all, maybe send without AC num?
-// Spec example: "Request ability of AC 0: ... 0xFF 0x11 0x00" (Length 3)
-// If we want all, maybe we iterate? Or is there a wildcard?
-// Spec doesn't explicitly say how to request ALL. "request the ability of all ACs or one specific AC".
-// Maybe if we send just FF 11?
-// Let's implement requesting a specific AC for now.
-func (c *Client) GetACAbility(acNum uint8) ([]ACAbility, error) {
-	// Payload: FF 11 ACNum
+// GetACAbility requests the capabilities of a specific AC unit.
+func (c *Client) GetACAbility(ctx context.Context, acNum uint8) ([]ACAbility, error) {
 	payload := []byte{0xFF, ExtMsgTypeACAbility, acNum}
 
-	resp, err := c.sendRequest(MsgTypeExtended, payload)
+	resp, err := c.sendRequest(ctx, MsgTypeExtended, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -266,16 +260,11 @@ func (c *Client) GetACAbility(acNum uint8) ([]ACAbility, error) {
 	return UnmarshalACAbility(resp.Data)
 }
 
-// GetGroupNames requests names for a specific group or all
-// Spec: "Sending an extended message with data 0xFF 0x12 [0-15] to request the name all groups or one specific group."
-// Wait, "request the name all groups OR one specific group".
-// Example: "Request name of group 0: ... FF 12 00"
-// "Request name of all groups: ... FF 12" (Length 2)
-// So if we send just FF 12, we get all.
-func (c *Client) GetGroupNames() ([]GroupName, error) {
+// GetGroupNames requests names for all groups.
+func (c *Client) GetGroupNames(ctx context.Context) ([]GroupName, error) {
 	payload := []byte{0xFF, ExtMsgTypeGroupName}
 
-	resp, err := c.sendRequest(MsgTypeExtended, payload)
+	resp, err := c.sendRequest(ctx, MsgTypeExtended, payload)
 	if err != nil {
 		return nil, err
 	}

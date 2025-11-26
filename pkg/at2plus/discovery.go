@@ -1,7 +1,7 @@
 package at2plus
 
 import (
-	"fmt"
+	"context"
 	"net"
 	"time"
 )
@@ -11,19 +11,21 @@ type DiscoveryResult struct {
 	IP string
 }
 
-// Discover searches for AirTouch 2+ devices on the network
-// It tries UDP broadcast first (Ports 49004, 49005 as per newer models, and maybe others?)
-// Then falls back to scanning local subnet on port 9200.
-func Discover() ([]DiscoveryResult, error) {
+// Discover searches for AirTouch 2+ devices on the network.
+// It scans the local subnet on port 9200.
+// The context controls the overall discovery timeout.
+// If the context has no deadline, a 3-second timeout is applied.
+func Discover(ctx context.Context) ([]DiscoveryResult, error) {
 	var results []DiscoveryResult
 
-	// Method 1: UDP Broadcast (Best effort guess based on AT4/5)
-	// We'll try to listen for broadcasts or send one.
-	// Since we don't know the exact protocol, we'll skip implementing a complex UDP handshake
-	// unless we find more info. The user asked for "discovery... not covered in the spec".
-	// The most reliable way without spec is TCP Port Scan on 9200.
+	// Apply default timeout if context has no deadline
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+	}
 
-	// Let's try to find local IP and scan /24
+	// Find local IP and scan /24
 	ips, err := getLocalIPs()
 	if err != nil {
 		return nil, err
@@ -47,7 +49,10 @@ func Discover() ([]DiscoveryResult, error) {
 			targetIP := net.IP{baseIP[0], baseIP[1], baseIP[2], byte(i)}
 			count++
 			go func(ip string) {
-				conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:9200", ip), 200*time.Millisecond)
+				var d net.Dialer
+				dialCtx, dialCancel := context.WithTimeout(ctx, 200*time.Millisecond)
+				defer dialCancel()
+				conn, err := d.DialContext(dialCtx, "tcp", net.JoinHostPort(ip, "9200"))
 				if err == nil {
 					conn.Close()
 					resultsCh <- scanResult{ip: ip, ok: true}
@@ -58,7 +63,6 @@ func Discover() ([]DiscoveryResult, error) {
 		}
 	}
 
-	timeout := time.After(3 * time.Second)
 collectResults:
 	for i := 0; i < count; i++ {
 		select {
@@ -66,8 +70,8 @@ collectResults:
 			if res.ok {
 				results = append(results, DiscoveryResult{IP: res.ip})
 			}
-		case <-timeout:
-			// Stop waiting
+		case <-ctx.Done():
+			// Context canceled or timed out
 			break collectResults
 		}
 	}

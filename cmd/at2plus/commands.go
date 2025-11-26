@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/zberg/go-at2plus/pkg/at2plus"
@@ -26,8 +28,11 @@ var discoverCmd = &cobra.Command{
 	Use:   "discover",
 	Short: "Discover AirTouch 2+ devices on the network",
 	Run: func(cmd *cobra.Command, args []string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
 		fmt.Println("Discovering devices...")
-		results, err := at2plus.Discover()
+		results, err := at2plus.Discover(ctx)
 		if err != nil {
 			fmt.Printf("Error discovering: %v\n", err)
 			return
@@ -48,11 +53,14 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show status of groups and ACs",
 	Run: func(cmd *cobra.Command, args []string) {
-		client := getClient()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		client := getClient(ctx)
 		defer client.Close()
 
 		fmt.Println("Fetching Group Status...")
-		groups, err := client.GetGroupStatus()
+		groups, err := client.GetGroupStatus(ctx)
 		if err != nil {
 			fmt.Printf("Error getting group status: %v\n", err)
 		} else {
@@ -70,7 +78,7 @@ var statusCmd = &cobra.Command{
 		}
 
 		fmt.Println("\nFetching AC Status...")
-		acs, err := client.GetACStatus()
+		acs, err := client.GetACStatus(ctx)
 		if err != nil {
 			fmt.Printf("Error getting AC status: %v\n", err)
 		} else {
@@ -136,10 +144,13 @@ var controlGroupCmd = &cobra.Command{
 			pct = &percent
 		}
 
-		client := getClient()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		client := getClient(ctx)
 		defer client.Close()
 
-		err = client.SetGroupControl([]at2plus.GroupControl{
+		err = client.SetGroupControl(ctx, []at2plus.GroupControl{
 			{
 				GroupNumber: uint8(groupNum),
 				Power:       power,
@@ -209,10 +220,13 @@ var controlACCmd = &cobra.Command{
 			setpoint = &temp
 		}
 
-		client := getClient()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		client := getClient(ctx)
 		defer client.Close()
 
-		err = client.SetACControl([]at2plus.ACControl{
+		err = client.SetACControl(ctx, []at2plus.ACControl{
 			{
 				ACNumber: uint8(acNum),
 				Power:    power,
@@ -238,13 +252,13 @@ func init() {
 	controlACCmd.Flags().Int("temp", 0, "Temperature setpoint")
 }
 
-func getClient() *at2plus.Client {
+func getClient(ctx context.Context) *at2plus.Client {
 	if targetIP == "" {
 		fmt.Println("IP address required. Use --ip flag or run discover first.")
 		os.Exit(1)
 	}
 
-	client, err := at2plus.NewClient(targetIP)
+	client, err := at2plus.NewClient(ctx, targetIP)
 	if err != nil {
 		fmt.Printf("Error connecting to %s: %v\n", targetIP, err)
 		os.Exit(1)
