@@ -60,6 +60,10 @@ func NewClient(ctx context.Context, ip string, opts ...ClientOption) (*Client, e
 		closeCh:        make(chan struct{}),
 	}
 
+	if c.logger != nil {
+		c.logger.Debug("connected to device", "addr", addr)
+	}
+
 	go c.readLoop()
 
 	return c, nil
@@ -74,6 +78,9 @@ func (c *Client) Close() error {
 	}
 	c.isClosed = true
 	close(c.closeCh)
+	if c.logger != nil {
+		c.logger.Debug("connection closed", "addr", c.addr)
+	}
 	return c.conn.Close()
 }
 
@@ -83,36 +90,22 @@ func (c *Client) readLoop() {
 		case <-c.closeCh:
 			return
 		default:
-			// Read header first? Or just read chunks.
-			// Since TCP is a stream, we should read carefully.
-			// For simplicity in this proof of concept, we'll read into a buffer and try to decode.
-			// A robust implementation would use a scanner or buffer accumulation.
-			// Given the packet format has a length, we can read header then length then data.
-
-			// Read Header (2 bytes)
-			// Actually, let's just read a chunk and assume packets don't span too weirdly for now,
-			// or better, implement a proper reader.
-
-			// Proper reader implementation:
-			headerBuf := make([]byte, 8) // Header(2)+Addr(2)+ID(1)+Type(1)+Len(2)
+			// Read packet header: Header(2)+Addr(2)+ID(1)+Type(1)+Len(2)
+			headerBuf := make([]byte, 8)
 			_, err := io.ReadFull(c.conn, headerBuf)
 			if err != nil {
-				// Handle error (reconnect or close)
+				if c.logger != nil {
+					c.logger.Error("failed to read header", "error", err)
+				}
 				c.Close()
 				return
 			}
 
-			// Decode header to get length
-			// We can use Decode() but it expects full packet.
-			// Let's parse manually just for length.
-			// HeaderBytes = 0x5555
-			// DataLen is at index 6 (2 bytes)
-			// Wait, Decode() checks header.
-
-			// Check header
+			// Check header magic bytes
 			if headerBuf[0] != 0x55 || headerBuf[1] != 0x55 {
-				// Invalid header, maybe out of sync.
-				// For now, just continue/fail.
+				if c.logger != nil {
+					c.logger.Warn("invalid header, out of sync", "header", headerBuf[:2])
+				}
 				continue
 			}
 
@@ -120,7 +113,9 @@ func (c *Client) readLoop() {
 
 			// Validate data length to prevent excessive memory allocation
 			if dataLen > MaxDataLen {
-				// Skip this packet - likely malformed or malicious
+				if c.logger != nil {
+					c.logger.Warn("packet exceeds max length", "dataLen", dataLen, "max", MaxDataLen)
+				}
 				continue
 			}
 
@@ -129,19 +124,28 @@ func (c *Client) readLoop() {
 			dataBuf := make([]byte, toRead)
 			_, err = io.ReadFull(c.conn, dataBuf)
 			if err != nil {
+				if c.logger != nil {
+					c.logger.Error("failed to read data", "error", err)
+				}
 				c.Close()
 				return
 			}
 
-			// Combine
+			// Combine and decode
 			fullPacket := append(headerBuf, dataBuf...)
 			packet, err := Decode(fullPacket)
 			if err != nil {
-				// Invalid packet, skip and continue reading
+				if c.logger != nil {
+					c.logger.Warn("failed to decode packet", "error", err)
+				}
 				continue
 			}
 
-			// Dispatch
+			if c.logger != nil {
+				c.logger.Debug("packet received", "msgID", packet.MsgID, "msgType", packet.MsgType, "dataLen", len(packet.Data))
+			}
+
+			// Dispatch to waiting request
 			c.pendingMu.Lock()
 			ch, ok := c.pending[packet.MsgID]
 			if ok {
@@ -180,7 +184,14 @@ func (c *Client) sendRequest(ctx context.Context, msgType uint8, data []byte) (*
 		c.pendingMu.Lock()
 		delete(c.pending, msgID)
 		c.pendingMu.Unlock()
+		if c.logger != nil {
+			c.logger.Error("failed to send request", "msgID", msgID, "error", err)
+		}
 		return nil, err
+	}
+
+	if c.logger != nil {
+		c.logger.Debug("request sent", "msgID", msgID, "msgType", msgType, "dataLen", len(data))
 	}
 
 	// Apply request timeout if context has no deadline
@@ -193,11 +204,17 @@ func (c *Client) sendRequest(ctx context.Context, msgType uint8, data []byte) (*
 	// Wait for response
 	select {
 	case resp := <-respCh:
+		if c.logger != nil {
+			c.logger.Debug("response received", "msgID", msgID)
+		}
 		return resp, nil
 	case <-ctx.Done():
 		c.pendingMu.Lock()
 		delete(c.pending, msgID)
 		c.pendingMu.Unlock()
+		if c.logger != nil {
+			c.logger.Warn("request timeout", "msgID", msgID)
+		}
 		return nil, fmt.Errorf("request canceled: %w", ctx.Err())
 	}
 }
