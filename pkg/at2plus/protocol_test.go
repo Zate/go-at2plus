@@ -52,3 +52,41 @@ func TestDecode_SpecExample_GroupStatusResponse(t *testing.T) {
 	assert.Equal(t, uint16(0x18), p.DataLen)
 	assert.Equal(t, uint16(0x832F), p.CRC)
 }
+
+func TestDecode_TooShort(t *testing.T) {
+	// Packet shorter than minimum header (8 bytes + 2 CRC)
+	shortData := []byte{0x55, 0x55, 0x80, 0xB0}
+
+	_, err := Decode(shortData)
+	assert.Error(t, err)
+}
+
+func TestDecode_InvalidHeader(t *testing.T) {
+	// Wrong header magic bytes (not 0x5555)
+	data, _ := hex.DecodeString("AABB80B001C00000832F")
+
+	_, err := Decode(data)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid header")
+}
+
+func TestDecode_InvalidChecksum(t *testing.T) {
+	// Valid packet but with corrupted CRC (changed last two bytes)
+	// Original: 5555B08001C00018210000000002000800000000000080004132000000000200832F
+	// Corrupted CRC: FFFF instead of 832F
+	data, _ := hex.DecodeString("5555B08001C00018210000000002000800000000000080004132000000000200FFFF")
+
+	_, err := Decode(data)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "checksum")
+}
+
+func TestDecode_DataLengthMismatch(t *testing.T) {
+	// Header claims 24 bytes of data but packet is truncated
+	// Header: 5555 B080 01 C0 0018 (dataLen=24)
+	// But only provides 8 bytes of data + CRC
+	data, _ := hex.DecodeString("5555B08001C00018210000000000832F")
+
+	_, err := Decode(data)
+	assert.Error(t, err)
+}

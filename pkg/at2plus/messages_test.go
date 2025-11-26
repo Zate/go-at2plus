@@ -143,3 +143,105 @@ func TestUnmarshalGroupName_SpecExample(t *testing.T) {
 	assert.Equal(t, uint8(0), names[0].GroupNumber)
 	assert.Equal(t, "Group1", names[0].Name)
 }
+
+func TestMarshalACControl_SingleAC(t *testing.T) {
+	powerOn := 3 // On
+	mode := 4    // Cool
+
+	acs := []ACControl{
+		{
+			ACNumber: 0,
+			Power:    &powerOn,
+			Mode:     &mode,
+		},
+	}
+
+	data, err := MarshalACControl(acs)
+	require.NoError(t, err)
+
+	// Header: 22 00 00 00 00 01 00 04 (SubType, 0s, count=1, repeatLen=4)
+	// Data: AC0 with power=3 (on), mode=4 (cool)
+	// Byte1: (power<<4) | acNum = (3<<4) | 0 = 0x30
+	// Byte2: (mode<<4) | fanSpeed = (4<<4) | 0 = 0x40
+	// Byte3: 0x00 (no setpoint change)
+	// Byte4: 0x00
+
+	assert.Equal(t, byte(SubMsgTypeACControl), data[0])
+	assert.Equal(t, byte(0x30), data[8])  // power on, AC 0
+	assert.Equal(t, byte(0x40), data[9])  // cool mode
+	assert.Equal(t, byte(0x00), data[10]) // no setpoint
+}
+
+func TestMarshalACControl_MultipleACs(t *testing.T) {
+	powerOff := 2 // Off
+	powerOn := 3  // On
+
+	acs := []ACControl{
+		{ACNumber: 0, Power: &powerOff},
+		{ACNumber: 1, Power: &powerOn},
+	}
+
+	data, err := MarshalACControl(acs)
+	require.NoError(t, err)
+
+	// Should have 2 ACs
+	count := int(data[4])<<8 | int(data[5])
+	assert.Equal(t, 2, count)
+
+	// AC0: power off (2<<4 = 0x20), ACNum 0
+	assert.Equal(t, byte(0x20), data[8])
+	// AC1: power on (3<<4 = 0x30), ACNum 1
+	assert.Equal(t, byte(0x31), data[12])
+}
+
+func TestMarshalACControl_WithSetpoint(t *testing.T) {
+	setpoint := 24
+
+	acs := []ACControl{
+		{ACNumber: 0, Setpoint: &setpoint},
+	}
+
+	data, err := MarshalACControl(acs)
+	require.NoError(t, err)
+
+	// Byte3 (offset 10): 0x40 = change setpoint
+	assert.Equal(t, byte(0x40), data[10])
+	// Byte4 (offset 11): (24*10)-100 = 140 = 0x8C
+	assert.Equal(t, byte(0x8C), data[11])
+}
+
+func TestUnmarshalGroupStatus_InvalidSubType(t *testing.T) {
+	// Use wrong subtype (0x23 instead of 0x21)
+	data, _ := hex.DecodeString("230000000001000800000000000080")
+
+	_, err := UnmarshalGroupStatus(data)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid sub type")
+}
+
+func TestUnmarshalGroupStatus_TooShort(t *testing.T) {
+	// Data shorter than minimum header (8 bytes)
+	data := []byte{0x21, 0x00, 0x00}
+
+	_, err := UnmarshalGroupStatus(data)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidLength)
+}
+
+func TestUnmarshalACStatus_InvalidSubType(t *testing.T) {
+	// Use wrong subtype (0x21 instead of 0x23)
+	data, _ := hex.DecodeString("210000000001000A101278C002DA00008000")
+
+	_, err := UnmarshalACStatus(data)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid sub type")
+}
+
+func TestUnmarshalACStatus_TooShort(t *testing.T) {
+	// Data shorter than minimum header
+	data := []byte{0x23, 0x00}
+
+	_, err := UnmarshalACStatus(data)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidLength)
+}
