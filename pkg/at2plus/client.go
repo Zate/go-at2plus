@@ -47,7 +47,7 @@ func NewClient(ctx context.Context, ip string, opts ...ClientOption) (*Client, e
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("dial %s: %w", addr, err)
 	}
 
 	c := &Client{
@@ -187,7 +187,7 @@ func (c *Client) sendRequest(ctx context.Context, msgType uint8, data []byte) (*
 		if c.logger != nil {
 			c.logger.Error("failed to send request", "msgID", msgID, "error", err)
 		}
-		return nil, err
+		return nil, fmt.Errorf("write request (msgID %d): %w", msgID, err)
 	}
 
 	if c.logger != nil {
@@ -225,10 +225,14 @@ func (c *Client) GetGroupStatus(ctx context.Context) ([]GroupStatus, error) {
 
 	resp, err := c.sendRequest(ctx, MsgTypeControlStatus, payload)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get group status: %w", err)
 	}
 
-	return UnmarshalGroupStatus(resp.Data)
+	groups, err := UnmarshalGroupStatus(resp.Data)
+	if err != nil {
+		return nil, fmt.Errorf("get group status: %w", err)
+	}
+	return groups, nil
 }
 
 // GetACStatus requests status for all ACs.
@@ -237,32 +241,42 @@ func (c *Client) GetACStatus(ctx context.Context) ([]ACStatus, error) {
 
 	resp, err := c.sendRequest(ctx, MsgTypeControlStatus, payload)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get AC status: %w", err)
 	}
 
-	return UnmarshalACStatus(resp.Data)
+	acs, err := UnmarshalACStatus(resp.Data)
+	if err != nil {
+		return nil, fmt.Errorf("get AC status: %w", err)
+	}
+	return acs, nil
 }
 
 // SetGroupControl sends a control command to groups.
 func (c *Client) SetGroupControl(ctx context.Context, groups []GroupControl) error {
 	data, err := MarshalGroupControl(groups)
 	if err != nil {
-		return err
+		return fmt.Errorf("set group control: %w", err)
 	}
 
 	_, err = c.sendRequest(ctx, MsgTypeControlStatus, data)
-	return err
+	if err != nil {
+		return fmt.Errorf("set group control: %w", err)
+	}
+	return nil
 }
 
 // SetACControl sends a control command to ACs.
 func (c *Client) SetACControl(ctx context.Context, acs []ACControl) error {
 	data, err := MarshalACControl(acs)
 	if err != nil {
-		return err
+		return fmt.Errorf("set AC control: %w", err)
 	}
 
 	_, err = c.sendRequest(ctx, MsgTypeControlStatus, data)
-	return err
+	if err != nil {
+		return fmt.Errorf("set AC control: %w", err)
+	}
+	return nil
 }
 
 // GetACAbility requests the capabilities of a specific AC unit.
@@ -271,10 +285,14 @@ func (c *Client) GetACAbility(ctx context.Context, acNum uint8) ([]ACAbility, er
 
 	resp, err := c.sendRequest(ctx, MsgTypeExtended, payload)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get AC ability (AC %d): %w", acNum, err)
 	}
 
-	return UnmarshalACAbility(resp.Data)
+	abilities, err := UnmarshalACAbility(resp.Data)
+	if err != nil {
+		return nil, fmt.Errorf("get AC ability (AC %d): %w", acNum, err)
+	}
+	return abilities, nil
 }
 
 // GetGroupNames requests names for all groups.
@@ -283,8 +301,12 @@ func (c *Client) GetGroupNames(ctx context.Context) ([]GroupName, error) {
 
 	resp, err := c.sendRequest(ctx, MsgTypeExtended, payload)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get group names: %w", err)
 	}
 
-	return UnmarshalGroupName(resp.Data)
+	names, err := UnmarshalGroupName(resp.Data)
+	if err != nil {
+		return nil, fmt.Errorf("get group names: %w", err)
+	}
+	return names, nil
 }

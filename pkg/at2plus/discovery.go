@@ -2,6 +2,7 @@ package at2plus
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"time"
 )
@@ -28,7 +29,7 @@ func Discover(ctx context.Context) ([]DiscoveryResult, error) {
 	// Find local IP and scan /24
 	ips, err := getLocalIPs()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get local IPs: %w", err)
 	}
 
 	type scanResult struct {
